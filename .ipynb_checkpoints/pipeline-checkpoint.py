@@ -15,7 +15,7 @@ import time
 date = time.strftime('%d%b%y', time.localtime())
 
 def timestamp():
-    return(f"[{time.strftime("%H:%M:%S", time.localtime())}] ")
+    return(f"[{time.strftime("%H:%M:%S", time.localtime())}]")
 
 def timer(start_time, return_tuple = False):
     elapsed_time = time.time() - start_time
@@ -27,10 +27,12 @@ def timer(start_time, return_tuple = False):
     if return_tuple:
         return (hours, minutes, seconds)
     
+    if hours > 0:
+        return f'{hours:.0f}h {minutes:.0f}m {seconds:.1f}s'
+    
     if minutes > 0:
-        if hours > 0:
-            return f'{hours:.0f}h {minutes:.0f}m {seconds:.1f}s'
         return f'{minutes:.0f}m {seconds:.1f}s'
+    
     return f'{seconds:.1f}s'
 
 start_time = time.time()
@@ -71,18 +73,18 @@ lephare_config = lp.read_config("/pscratch/sd/s/sajkov/analysis_pipeline/lephare
 lp.data_retrieval.get_auxiliary_data(keymap = lephare_config)
 
 path_to_filters = "/pscratch/sd/s/sajkov/analysis_pipeline/filters"
-os.makedirs(f"{os.environ["LEPHAREDIR"]}/filt/pipeline", exist_ok = True)
+os.makedirs(f"{os.environ['LEPHAREDIR']}/filt/pipeline", exist_ok = True)
 for f in glob.glob(f"{path_to_filters}/*.dat"):
     if f.endswith("F146.dat"):
         continue
-    shutil.copy(f, f"{os.environ["LEPHAREDIR"]}/filt/pipeline/")
+    shutil.copy(f, f"{os.environ['LEPHAREDIR']}/filt/pipeline/")
 
-FILTER_LIST = ",".join([f"pipeline/{os.path.basename(f)}" for f in glob.glob(f"{os.environ["LEPHAREDIR"]}/filt/pipeline/*.dat")])
+FILTER_LIST = ",".join([f"pipeline/{os.path.basename(f)}" for f in glob.glob(f"{os.environ['LEPHAREDIR']}/filt/pipeline/*.dat")])
 lephare_config["FILTER_LIST"].value = FILTER_LIST
 lephare_config["FILTER_FILE"].value = "filter_pipeline"
 
-os.makedirs(f"{os.environ["LEPHAREDIR"]}/output", exist_ok = True)
-lephare_config["PARA_OUT"].value = f"{os.environ["LEPHAREDIR"]}/output/output_{date}.para"
+os.makedirs(f"{os.environ['LEPHAREDIR']}/output", exist_ok = True)
+lephare_config["PARA_OUT"].value = f"{os.environ['LEPHAREDIR']}/output/output_{date}.para"
 
 lp.data_retrieval.get_auxiliary_data(keymap=lephare_config)
 
@@ -94,8 +96,7 @@ rng = np.random.default_rng(seed = seed)
 
 ### Specify outputs directory
 outputs_directory = f"/pscratch/sd/s/sajkov/analysis_pipeline/runs/{date}"
-if not os.path.exists(outputs_directory):
-    os.makedirs(outputs_directory)
+os.makedirs(outputs_directory, exist_ok = True)
     
 # ----------------------------------------------------------------------------------------------- #
 # Section 1: Create datasets                                                                      #
@@ -108,17 +109,18 @@ noiseless_catalog_filepath = "/pscratch/sd/s/sajkov/data/integrated_catalog_23ap
 redshifts_filepath = "/pscratch/sd/s/sajkov/data/mock_catalog_Ch1_26.h5"
 
 DATASET_popCosmos_full   = tables_io.read(noiseless_catalog_filepath)
-REDSHIFTS_popCosmos_full = h5py.File(redshifts_filepath)['sps_parameters'][:, -1]
+with h5py.File(redshifts_filepath) as simulated_catalog:
+    REDSHIFTS_popCosmos_full = simulated_catalog['sps_parameters'][:, -1]
 
 ### Number of pop-cosmos sources to use in analysis
-data_cut = 100_000 ### Note that,
+data_cut = 11_000 #100_000 ### Note that,
                      # since the LePhare informer needs a separate sample to generate templates,
                      # this number will be inflated by {deep_field_frac}% in the final analysis.
                      # Of the number you specify, {deep_field_frac}% will indeed be reserved as `deep-field` sources
                      # and {1 - deep_field_frac}% will indeed be reserved as `WideFastDeep` sources.
 
 ### Fraction of deep field versus WFD photometry
-deep_field_frac = 0.2
+deep_field_frac = 0.090909 #0.2
 
 ### Randomize full dataset indices, take `deep_field_frac` to be the deep field, let the rest be WFD
 RANDIDX_popCosmos_full = rng.choice(np.arange(len(DATASET_popCosmos_full)), len(DATASET_popCosmos_full), replace = False)
@@ -269,7 +271,7 @@ getNoisyDeepFieldPhotometry_lpReference.finalize()
 
 print(timestamp(), "Getting noisy WideFastDeep photometry.          ", end = "\r")
 
-noisyPhotometryPath_WideFastDeep = f"{outputs_directory}//PHOTOMETRY_WideFastDeep_noisy_{date}.pq"
+noisyPhotometryPath_WideFastDeep = f"{outputs_directory}/PHOTOMETRY_WideFastDeep_noisy_{date}.pq"
 
 getNoisyWideFastDeepPhotometry = MultiSurveyErrorModel.make_stage(
     name = "getNoisyWideFastDeepPhotometry",
@@ -295,6 +297,12 @@ getNoisyWideFastDeepPhotometry.get_handle("noisy_catalog").write()
 getNoisyWideFastDeepPhotometry.finalize()
 
 print(timestamp(), "Finished creating datasets. Time elapsed: ", timer(start_time))
+
+print("------------ Length of datasets ------------")
+print(f"- Deep field:                    {len(PHOTOMETRY_DeepField_noiseless)}")
+print(f"- Deep field, LePhare reference: {len(PHOTOMETRY_DeepField_lpReference_noiseless)}")
+print(f"- WideFastDeep field:            {len(PHOTOMETRY_WideFastDeep_noiseless)}")
+print("--------------------------------------------")
 
 # ----------------------------------------------------------------------------------------------- #
 # Section 2: Estimate photo-zs for deep-field sampe with LePhare                                  #
@@ -333,6 +341,7 @@ TRAININGDATA_LePhare["redshift"] = REDSHIFTS_DeepField_lpReference
 
 inform_lephare.inform(TRAININGDATA_LePhare)
 inform_lephare.get_handle("model").write()
+inform_lephare.finalize()
 
 print(timestamp(), "Informed LePhare. Time elapsed: ", timer(start_time))
 
@@ -342,7 +351,7 @@ print(timestamp(), "Estimating photo-zs with LePhare", end = "\r")
 outputEstimationPath_lePhare = f"{outputs_directory}/estimation_lephare_{date}"
 estimate_lephare = LephareEstimator.make_stage(
     
-    name           = outputEstimationPath_lePhare,
+    name           = "estimate_lephare",
     model          = inform_lephare.get_handle("model"),
     hdf5_groupname = "",
 
@@ -356,7 +365,6 @@ estimate_lephare = LephareEstimator.make_stage(
 
 ESTIMATION_DATA_LePhare = getNoisyDeepFieldPhotometry.get_handle("noisy_catalog").data
 lephare_estimated = estimate_lephare.estimate(ESTIMATION_DATA_LePhare)
-lephare_estimated.write()
 
 PHOTOZS_rawLePhareOutput = lephare_estimated.read().median()
 SIGMAS_photoZs_rawLePhareOutput = lephare_estimated.read().std()
@@ -488,7 +496,7 @@ estimatePhotozsUMAP_wPhotoZs = UMAPEstimator.make_stage(
 
 estimatePhotozsUMAP_wPhotoZs.set_data("training_photometry", data = TRAINING_PHOTOMETRY_UMAP)
 estimatePhotozsUMAP_wPhotoZs.set_data("training_phot_error", data = TRAINING_PHOTOMERRS_UMAP)
-estimatePhotozsUMAP_wPhotoZs.set_data("training_redshift",   data = PHOTOZS_DeepField_lephare)
+estimatePhotozsUMAP_wPhotoZs.set_data("training_redshift",   data = TRAINING_REDSHIFTS_UMAP_photoZs)
 
 estimatePhotozsUMAP_wPhotoZs.UMAP_informer()
 
