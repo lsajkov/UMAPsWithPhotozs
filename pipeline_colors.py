@@ -113,7 +113,7 @@ with h5py.File(redshifts_filepath) as simulated_catalog:
     REDSHIFTS_popCosmos_full = simulated_catalog['sps_parameters'][:, -1]
 
 ### Number of pop-cosmos sources to use in analysis
-data_cut = 110_000 #100_000 ### Note that,
+data_cut = 1_100 #100_000 ### Note that,
                      # since the LePhare informer needs a separate sample to generate templates,
                      # this number will be inflated by {deep_field_frac}% in the final analysis.
                      # Of the number you specify, {deep_field_frac}% will indeed be reserved as `deep-field` sources
@@ -196,9 +196,9 @@ REDSHIFTS_DeepField                = REDSHIFTS_popCosmos_full[IDX_popCosmos_Deep
 REDSHIFTS_DeepField_lpReference    = REDSHIFTS_popCosmos_full[IDX_popCosmos_DeepField_lpReference]
 REDSHIFTS_WideFastDeep             = REDSHIFTS_popCosmos_full[IDX_popCosmos_WideFastDeep]
 
-np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField.pkl",             REDSHIFTS_DeepField,             allow_pickle = True)            
-np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField_lpReference.pkl", REDSHIFTS_DeepField_lpReference, allow_pickle = True)
-np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep.pkl",          REDSHIFTS_WideFastDeep,          allow_pickle = True)         
+np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField",             REDSHIFTS_DeepField,             allow_pickle = True)            
+np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField_lpReference", REDSHIFTS_DeepField_lpReference, allow_pickle = True)
+np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep",          REDSHIFTS_WideFastDeep,          allow_pickle = True)         
 
 ### ### Apply noise
 
@@ -400,19 +400,51 @@ ESTIMATION_DATA_UMAP = getNoisyWideFastDeepPhotometry.get_handle("noisy_catalog"
 ESTIMATION_PHOTOMETRY_UMAP = ESTIMATION_DATA_UMAP[BANDS_WideFastDeep]
 ESTIMATION_PHOTOMERRS_UMAP = ESTIMATION_DATA_UMAP[ERR_BANDS_WideFastDeep]
 
+COLORNAMES_WideFastDeep = [f"{BANDS_WideFastDeep[i].split('_')[-1]}-{BANDS_WideFastDeep[i + 1].split('_')[-1]}"
+                           for i in range(len(BANDS_WideFastDeep) - 1)]
+
+COLERRNAMES_WideFastDeep = [f"{BANDS_WideFastDeep[i].split('_')[-1]}-{BANDS_WideFastDeep[i + 1].split('_')[-1]}_err"
+                           for i in range(len(BANDS_WideFastDeep) - 1)]
+
+TRAINING_COLORS_UMAP = pd.DataFrame(
+    {COLORNAMES_WideFastDeep[i]:
+        TRAINING_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i]] - TRAINING_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i + 1]]
+            for i in range(len(BANDS_WideFastDeep) - 1)}
+)
+
+TRAINING_COLERRS_UMAP = pd.DataFrame(
+    {COLERRNAMES_WideFastDeep[i]:
+        np.clip(np.sqrt(TRAINING_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i]]**2 + TRAINING_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i + 1]]**2),
+                None, 0.05)
+            for i in range(len(ERR_BANDS_WideFastDeep) - 1)}
+)
+
+ESTIMATION_COLORS_UMAP = pd.DataFrame(
+    {COLORNAMES_WideFastDeep[i]:
+        TRAINING_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i]] - TRAINING_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i + 1]]
+            for i in range(len(BANDS_WideFastDeep) - 1)}
+)
+
+ESTIMATION_COLERRS_UMAP = pd.DataFrame(
+    {COLERRNAMES_WideFastDeep[i]:
+        np.clip(np.sqrt(ESTIMATION_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i]]**2 + ESTIMATION_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i + 1]]**2),
+                None, 0.05)
+            for i in range(len(ERR_BANDS_WideFastDeep) - 1)}
+)
+
 print(timestamp(), "Prepared input data for UMAPs. Time elapsed: ", timer(start_time))
 
 print(timestamp(), "Building, and getting redshifts from, spec-z UMAP", end = "\r")
 
 ### Set UMAP parameters
 ambient_metric_umap = "manhattan_weighted_linear"
-n_neighbors_umap    = 10
-min_dist            = 0.05
+n_neighbors_umap    = 80
+min_dist            = 0.0
 
 n_neighbors_knn = 100
 metric_p_knn   = 2
 
-precision_gauss_kde = 0.1
+precision_gauss_kde = 0.01
 
 ### Buld a UMAP from the training photometry, colored with spectrosopic redshifts
 informedReducerPath_UMAP_wSpecZs      = f"{outputs_directory}/informedReducer_UMAP_wSpecZs_{date}.pkl"
@@ -449,14 +481,14 @@ estimatePhotozsUMAP_wSpecZs = UMAPEstimator.make_stage(
     seed = seed
 )
 
-estimatePhotozsUMAP_wSpecZs.set_data("training_photometry", data = TRAINING_PHOTOMETRY_UMAP)
-estimatePhotozsUMAP_wSpecZs.set_data("training_phot_error", data = TRAINING_PHOTOMERRS_UMAP)
+estimatePhotozsUMAP_wSpecZs.set_data("training_photometry", data = TRAINING_COLORS_UMAP)
+estimatePhotozsUMAP_wSpecZs.set_data("training_phot_error", data = TRAINING_COLERRS_UMAP)
 estimatePhotozsUMAP_wSpecZs.set_data("training_redshift",   data = TRAINING_REDSHIFTS_UMAP_specZs)
 
 estimatePhotozsUMAP_wSpecZs.UMAP_informer()
 
-estimatePhotozsUMAP_wSpecZs.set_data("estimation_photometry", data = ESTIMATION_PHOTOMETRY_UMAP)
-estimatePhotozsUMAP_wSpecZs.set_data("estimation_phot_error", data = ESTIMATION_PHOTOMERRS_UMAP)
+estimatePhotozsUMAP_wSpecZs.set_data("estimation_photometry", data = ESTIMATION_COLORS_UMAP)
+estimatePhotozsUMAP_wSpecZs.set_data("estimation_phot_error", data = ESTIMATION_COLERRS_UMAP)
 estimatePhotozsUMAP_wSpecZs.UMAP_estimator()
 
 estimatePhotozsUMAP_wSpecZs.get_handle("informed_reducer").write()
