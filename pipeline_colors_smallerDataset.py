@@ -12,7 +12,8 @@ print("Starting pipeline.")
 
 ### Set the date, start the timer
 import time
-date = time.strftime('%d%b%y', time.localtime())
+# date = time.strftime('%d%b%y', time.localtime())
+date = "08Jul26"
 
 def timestamp():
     return(f"[{time.strftime("%H:%M:%S", time.localtime())}]")
@@ -113,14 +114,14 @@ with h5py.File(redshifts_filepath) as simulated_catalog:
     REDSHIFTS_popCosmos_full = simulated_catalog['sps_parameters'][:, -1]
 
 ### Number of pop-cosmos sources to use in analysis
-data_cut = 120_000 #100_000 ### Note that,
+data_cut = 60_000 #100_000 ### Note that,
                      # since the LePhare informer needs a separate sample to generate templates,
                      # this number will be inflated by {deep_field_frac}% in the final analysis.
                      # Of the number you specify, {deep_field_frac}% will indeed be reserved as `deep-field` sources
                      # and {1 - deep_field_frac}% will indeed be reserved as `WideFastDeep` sources.
 
 ### Fraction of deep field versus WFD photometry
-deep_field_frac = 0.1666666667 #0.2
+deep_field_frac = 1/6 #0.2
 
 ### Randomize full dataset indices, take `deep_field_frac` to be the deep field, let the rest be WFD
 RANDIDX_popCosmos_full = rng.choice(np.arange(len(DATASET_popCosmos_full)), len(DATASET_popCosmos_full), replace = False)

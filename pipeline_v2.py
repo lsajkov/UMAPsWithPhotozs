@@ -12,7 +12,8 @@ print("Starting pipeline.")
 
 ### Set the date, start the timer
 import time
-date = time.strftime('%d%b%y', time.localtime())
+# date = time.strftime('%d%b%y', time.localtime())
+date = "08Jul26"
 
 def timestamp():
     return(f"[{time.strftime("%H:%M:%S", time.localtime())}]")
@@ -60,36 +61,6 @@ from UMAPEstimator import UMAPEstimator
 
 print(timestamp(), "Finished importing modules. Time elapsed: ", timer(start_time))
 
-print(timestamp(), "Setting up LePhare", end = "\r")
-
-### Set up LePhare
-path_to_lp_config_file    = "/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para"
-os.environ["LEPHAREDIR"]  = f"{os.path.dirname(path_to_lp_config_file)}/data"
-os.environ["LEPHAREWORK"] = f"{os.path.dirname(path_to_lp_config_file)}/work"
-
-from rail.estimation.algos.lephare import LephareInformer, LephareEstimator
-import lephare as lp
-lephare_config = lp.read_config("/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para")
-lp.data_retrieval.get_auxiliary_data(keymap = lephare_config)
-
-path_to_filters = "/pscratch/sd/s/sajkov/analysis_pipeline/filters"
-os.makedirs(f"{os.environ['LEPHAREDIR']}/filt/pipeline", exist_ok = True)
-for f in glob.glob(f"{path_to_filters}/*.dat"):
-    if f.endswith("F146.dat"):
-        continue
-    shutil.copy(f, f"{os.environ['LEPHAREDIR']}/filt/pipeline/")
-
-FILTER_LIST = ",".join([f"pipeline/{os.path.basename(f)}" for f in glob.glob(f"{os.environ['LEPHAREDIR']}/filt/pipeline/*.dat")])
-lephare_config["FILTER_LIST"].value = FILTER_LIST
-lephare_config["FILTER_FILE"].value = "filter_pipeline"
-
-os.makedirs(f"{os.environ['LEPHAREDIR']}/output", exist_ok = True)
-lephare_config["PARA_OUT"].value = f"{os.environ['LEPHAREDIR']}/output/output_{date}.para"
-
-lp.data_retrieval.get_auxiliary_data(keymap=lephare_config)
-
-print(timestamp(), "Set up LePhare. Time elapsed: ", timer(start_time))
-
 ### Initialize random state
 seed = 42
 rng = np.random.default_rng(seed = seed)
@@ -113,23 +84,18 @@ with h5py.File(redshifts_filepath) as simulated_catalog:
     REDSHIFTS_popCosmos_full = simulated_catalog['sps_parameters'][:, -1]
 
 ### Number of pop-cosmos sources to use in analysis
-data_cut = 120_000 #100_000 ### Note that,
-                     # since the LePhare informer needs a separate sample to generate templates,
-                     # this number will be inflated by {deep_field_frac}% in the final analysis.
-                     # Of the number you specify, {deep_field_frac}% will indeed be reserved as `deep-field` sources
-                     # and {1 - deep_field_frac}% will indeed be reserved as `WideFastDeep` sources.
+training_cut   = 1_000 ### Number of sources used to train the estimators
+estimation_cut = 100   ### Number of sources for which to estimate redshifts
 
-### Fraction of deep field versus WFD photometry
-deep_field_frac = 0.1666666667 #0.2
+### Randomize full dataset indices
+len_DATASET_popCosmos_full = len(DATASET_popCosmos_full)
+RANDIDX_popCosmos_full = rng.choice(np.arange(len_DATASET_popCosmos_full),
+                                    len_DATASET_popCosmos_full,
+                                    replace = False)
 
-### Randomize full dataset indices, take `deep_field_frac` to be the deep field, let the rest be WFD
-RANDIDX_popCosmos_full = rng.choice(np.arange(len(DATASET_popCosmos_full)), len(DATASET_popCosmos_full), replace = False)
-RANDIDX_popCosmos_cut  = RANDIDX_popCosmos_full[:int(data_cut * (1 + deep_field_frac))]
-
-deep_field_cut = int(deep_field_frac * data_cut)
-IDX_popCosmos_DeepField             = RANDIDX_popCosmos_cut[:deep_field_cut]
-IDX_popCosmos_DeepField_lpReference = RANDIDX_popCosmos_cut[deep_field_cut:2*deep_field_cut]
-IDX_popCosmos_WideFastDeep          = RANDIDX_popCosmos_cut[2*deep_field_cut:]
+RANDIDX_DeepField_full,\
+    RANDIDX_DeepField_lpReference_full,\
+        RANDIDX_WideFastDeep_full = np.array_split(RANDIDX_popCosmos_full, 3)
 
 ### 5-sigma limiting depths ------------------
 ### LSST: median values for COSMOS deep field from https://usdf-maf.slac.stanford.edu/summaryStats?runId=5#Basics_Coadd%20M5
@@ -169,6 +135,7 @@ M5_DEPTHS_DeepField = {'LSST_u'    : 27.74,
                       'HSC_MB_14' : 25.15,
                       'HSC_MB_15' : 24.79}
 
+iBandLimit_DeepField = 27
 
 ### 5-sigma limiting depths for WideFastDeep from https://usdf-maf.slac.stanford.edu/summaryStats?runId=5#Basics_Coadd%20M5
 ### Column `DD:WFD CoaddM5`
@@ -179,6 +146,8 @@ M5_DEPTHS_WideFastDeep = {'LSST_u'    : 25.61,
                           'LSST_z'    : 25.73,
                           'LSST_y'    : 24.79}
 
+iBandLimit_WideFastDeep = 25
+
 ### Get list of bands
 BANDS_DeepField = list(M5_DEPTHS_DeepField.keys())
 ERR_BANDS_DeepField = [f"{key}_err" for key in BANDS_DeepField]
@@ -187,18 +156,9 @@ BANDS_WideFastDeep = list(M5_DEPTHS_WideFastDeep.keys())
 ERR_BANDS_WideFastDeep = [f"{key}_err" for key in BANDS_WideFastDeep]
 
 ### Select needed bands and pick out needed sources
-PHOTOMETRY_DeepField_noiseless                = DATASET_popCosmos_full[BANDS_DeepField].iloc[IDX_popCosmos_DeepField]
-PHOTOMETRY_DeepField_lpReference_noiseless    = DATASET_popCosmos_full[BANDS_DeepField].iloc[IDX_popCosmos_DeepField_lpReference]
-PHOTOMETRY_WideFastDeep_noiseless             = DATASET_popCosmos_full[BANDS_WideFastDeep].iloc[IDX_popCosmos_WideFastDeep]
-
-### Same as above, for redshifts
-REDSHIFTS_DeepField                = REDSHIFTS_popCosmos_full[IDX_popCosmos_DeepField]
-REDSHIFTS_DeepField_lpReference    = REDSHIFTS_popCosmos_full[IDX_popCosmos_DeepField_lpReference]
-REDSHIFTS_WideFastDeep             = REDSHIFTS_popCosmos_full[IDX_popCosmos_WideFastDeep]
-
-np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField",             REDSHIFTS_DeepField,             allow_pickle = True)            
-np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField_lpReference", REDSHIFTS_DeepField_lpReference, allow_pickle = True)
-np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep",          REDSHIFTS_WideFastDeep,          allow_pickle = True)         
+PHOTOMETRY_DeepField_noiseless                = DATASET_popCosmos_full[BANDS_DeepField].iloc[RANDIDX_DeepField_full]
+PHOTOMETRY_DeepField_lpReference_noiseless    = DATASET_popCosmos_full[BANDS_DeepField].iloc[RANDIDX_DeepField_lpReference_full]
+PHOTOMETRY_WideFastDeep_noiseless             = DATASET_popCosmos_full[BANDS_WideFastDeep].iloc[RANDIDX_WideFastDeep_full]
 
 ### ### Apply noise
 
@@ -217,15 +177,11 @@ seed = 42
 
 print(timestamp(), "Getting noisy deep field photometry.", end = "\r")
 
-noisyPhotometryPath_DeepField = f"{outputs_directory}/PHOTOMETRY_DeepField_noisy_{date}.pq"
-
 getNoisyDeepFieldPhotometry = MultiSurveyErrorModel.make_stage(
     name = "getNoisyDeepFieldPhotometry",
     
     inputType  = inputType,
     outputType = outputType,
-
-    noisy_catalog     = noisyPhotometryPath_DeepField,
     
     m5     = M5_DEPTHS_DeepField,
     bands  = BANDS_DeepField,
@@ -239,22 +195,25 @@ getNoisyDeepFieldPhotometry = MultiSurveyErrorModel.make_stage(
 
 getNoisyDeepFieldPhotometry.set_data("noiseless_catalog", PHOTOMETRY_DeepField_noiseless) 
 getNoisyDeepFieldPhotometry.run()
-getNoisyDeepFieldPhotometry.get_handle("noisy_catalog").write()
+PHOTOMETRY_DeepField_noisy_full = getNoisyDeepFieldPhotometry.get_handle("noisy_catalog").data
 getNoisyDeepFieldPhotometry.finalize()
+
+iBandCut_DeepField_noisy = PHOTOMETRY_DeepField_noisy_full["LSST_i"] < 27
+PHOTOMETRY_DeepField_noisy_iBandCut = PHOTOMETRY_DeepField_noisy_full[iBandCut_DeepField_noisy]
+PHOTOMETRY_DeepField_noisy_iBandCut_trainingCut = PHOTOMETRY_DeepField_noisy_iBandCut.iloc[:training_cut]
+
+PHOTOMETRY_DeepField_noisy = PHOTOMETRY_DeepField_noisy_iBandCut_trainingCut
+PHOTOMETRY_DeepField_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_DeepField_noisy_{date}.pq")
 
 ### Create: the same as above, but as a template-generating reference for LePhare
 
 print(timestamp(), "Getting noisy deep field photometry for LePhare.", end = "\r")
-
-noisyPhotometryPath_DeepField_LePhareReference = f"{outputs_directory}/PHOTOMETRY_DeepField_noisy_lpReference_{date}.pq"
 
 getNoisyDeepFieldPhotometry_lpReference = MultiSurveyErrorModel.make_stage(
     name = "getNoisyDeepFieldPhotometry_lpReference",
     
     inputType  = inputType,
     outputType = outputType,
-
-    noisy_catalog     = noisyPhotometryPath_DeepField_LePhareReference,
     
     m5     = M5_DEPTHS_DeepField,
     bands  = BANDS_DeepField,
@@ -268,22 +227,25 @@ getNoisyDeepFieldPhotometry_lpReference = MultiSurveyErrorModel.make_stage(
 
 getNoisyDeepFieldPhotometry_lpReference.set_data("noiseless_catalog", PHOTOMETRY_DeepField_lpReference_noiseless) 
 getNoisyDeepFieldPhotometry_lpReference.run()
-getNoisyDeepFieldPhotometry_lpReference.get_handle("noisy_catalog").write()
+PHOTOMETRY_DeepField_noisy_lpReference_full = getNoisyDeepFieldPhotometry_lpReference.get_handle("noisy_catalog").data
 getNoisyDeepFieldPhotometry_lpReference.finalize()
+
+iBandCut_DeepField_noisy_lpReference = PHOTOMETRY_DeepField_noisy_lpReference_full["LSST_i"] < iBandLimit_DeepField
+PHOTOMETRY_DeepField_noisy_lpReference_iBandCut = PHOTOMETRY_DeepField_noisy_lpReference_full[iBandCut_DeepField_noisy_lpReference]
+PHOTOMETRY_DeepField_noisy_lpReference_iBandCut_trainingCut = PHOTOMETRY_DeepField_noisy_lpReference_iBandCut.iloc[:training_cut]
+
+PHOTOMETRY_DeepField_noisy_lpReference = PHOTOMETRY_DeepField_noisy_lpReference_iBandCut_trainingCut
+PHOTOMETRY_DeepField_noisy_lpReference.to_parquet(f"{outputs_directory}/PHOTOMETRY_DeepField_noisy_lpReference_{date}.pq")
 
 ### Create: LSST-like photometry
 
 print(timestamp(), "Getting noisy WideFastDeep photometry.          ", end = "\r")
-
-noisyPhotometryPath_WideFastDeep = f"{outputs_directory}/PHOTOMETRY_WideFastDeep_noisy_{date}.pq"
 
 getNoisyWideFastDeepPhotometry = MultiSurveyErrorModel.make_stage(
     name = "getNoisyWideFastDeepPhotometry",
     
     inputType  = inputType,
     outputType = outputType,
-
-    noisy_catalog     = noisyPhotometryPath_WideFastDeep,
     
     m5     = M5_DEPTHS_WideFastDeep,
     bands  = BANDS_WideFastDeep,
@@ -297,8 +259,29 @@ getNoisyWideFastDeepPhotometry = MultiSurveyErrorModel.make_stage(
 
 getNoisyWideFastDeepPhotometry.set_data("noiseless_catalog", PHOTOMETRY_WideFastDeep_noiseless) 
 getNoisyWideFastDeepPhotometry.run()
-getNoisyWideFastDeepPhotometry.get_handle("noisy_catalog").write()
+PHOTOMETRY_WideFastDeep_noisy_full = getNoisyWideFastDeepPhotometry.get_handle("noisy_catalog").data
 getNoisyWideFastDeepPhotometry.finalize()
+
+iBandCut_WideFastDeep_noisy = PHOTOMETRY_WideFastDeep_noisy_full["LSST_i"] < 25
+PHOTOMETRY_WideFastDeep_noisy_iBandCut = PHOTOMETRY_WideFastDeep_noisy_full[iBandCut_WideFastDeep_noisy]
+PHOTOMETRY_WideFastDeep_noisy_iBandCut_trainingCut = PHOTOMETRY_WideFastDeep_noisy_iBandCut.iloc[:estimation_cut]
+
+PHOTOMETRY_WideFastDeep_noisy = PHOTOMETRY_WideFastDeep_noisy_iBandCut_trainingCut
+PHOTOMETRY_WideFastDeep_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_WideFastDeep_noisy_{date}.pq")
+
+### Get source indices
+IDX_popCosmos_DeepField             = list(PHOTOMETRY_DeepField_noisy.index)
+IDX_popCosmos_DeepField_lpReference = list(PHOTOMETRY_DeepField_noisy_lpReference.index)
+IDX_popCosmos_WideFastDeep          = list(PHOTOMETRY_WideFastDeep_noisy.index)
+
+### Select relevant redshifts
+REDSHIFTS_DeepField                = REDSHIFTS_popCosmos_full[IDX_popCosmos_DeepField]
+REDSHIFTS_DeepField_lpReference    = REDSHIFTS_popCosmos_full[IDX_popCosmos_DeepField_lpReference]
+REDSHIFTS_WideFastDeep             = REDSHIFTS_popCosmos_full[IDX_popCosmos_WideFastDeep]
+
+np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField",             REDSHIFTS_DeepField,             allow_pickle = True)            
+np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField_lpReference", REDSHIFTS_DeepField_lpReference, allow_pickle = True)
+np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep",          REDSHIFTS_WideFastDeep,          allow_pickle = True)         
 
 print(timestamp(), "Finished creating datasets. Time elapsed: ", timer(start_time))
 
@@ -309,8 +292,40 @@ print(f"WideFastDeep field:            {len(PHOTOMETRY_WideFastDeep_noiseless)}"
 print("--------------------------------------------")
 
 # ----------------------------------------------------------------------------------------------- #
-# Section 2: Estimate photo-zs for deep-field sampe with LePhare                                  #
+# Section 2: Estimate photo-zs for deep-field sample with LePhare                                 #
 # ----------------------------------------------------------------------------------------------- #
+
+print(timestamp(), "Setting up LePhare", end = "\r")
+
+### Set up LePhare
+path_to_lp_config_file    = "/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para"
+os.environ["LEPHAREDIR"]  = f"{os.path.dirname(path_to_lp_config_file)}/data"
+os.environ["LEPHAREWORK"] = f"{os.path.dirname(path_to_lp_config_file)}/work"
+
+from rail.estimation.algos.lephare import LephareInformer, LephareEstimator
+import lephare as lp
+lephare_config = lp.read_config("/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para")
+lp.data_retrieval.get_auxiliary_data(keymap = lephare_config)
+
+path_to_filters = "/pscratch/sd/s/sajkov/analysis_pipeline/filters"
+os.makedirs(f"{os.environ['LEPHAREDIR']}/filt/pipeline", exist_ok = True)
+for f in glob.glob(f"{path_to_filters}/*.dat"):
+    if f.endswith("F146.dat"):
+        continue
+    shutil.copy(f, f"{os.environ['LEPHAREDIR']}/filt/pipeline/")
+
+FILTER_LIST = ",".join([f"pipeline/{band}.dat" for band in BANDS_DeepField])
+print("Filters being used for LePhare:", FILTER_LIST)
+lephare_config["FILTER_LIST"].value = FILTER_LIST
+lephare_config["FILTER_FILE"].value = "filter_pipeline"
+
+os.makedirs(f"{os.environ['LEPHAREDIR']}/output", exist_ok = True)
+lephare_config["PARA_OUT"].value = f"{os.environ['LEPHAREDIR']}/output/output_{date}.para"
+
+lp.data_retrieval.get_auxiliary_data(keymap=lephare_config)
+
+print(timestamp(), "Set up LePhare. Time elapsed: ", timer(start_time))
+
 
 print(timestamp(), "Informing LePhare", end = "\r")
 
