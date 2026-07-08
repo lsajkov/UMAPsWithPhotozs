@@ -12,8 +12,7 @@ print("Starting pipeline.")
 
 ### Set the date, start the timer
 import time
-# date = time.strftime('%d%b%y', time.localtime())
-date = "07Jul26_test1"
+date = time.strftime('%d%b%y', time.localtime())
 
 def timestamp():
     return(f"[{time.strftime("%H:%M:%S", time.localtime())}]")
@@ -57,7 +56,8 @@ from rail.core.data import DataStore, PqHandle, ModelHandle
 from rail.core.stage import RailStage
 
 from MultiSurveyErrorModel import MultiSurveyErrorModel
-from UMAPEstimator import UMAPEstimator
+from rail.estimation.algos.flexzboost import FlexZBoostInformer, FlexZBoostEstimator
+# from UMAPEstimator import UMAPEstimator
 
 print(timestamp(), "Finished importing modules. Time elapsed: ", timer(start_time))
 
@@ -84,8 +84,8 @@ with h5py.File(redshifts_filepath) as simulated_catalog:
     REDSHIFTS_popCosmos_full = simulated_catalog['sps_parameters'][:, -1]
 
 ### Number of pop-cosmos sources to use in analysis
-training_cut   = 100 ### Number of sources used to train the estimators
-estimation_cut = 1_000   ### Number of sources for which to estimate redshifts
+training_cut   = 10_000 ### Number of sources used to train the estimators
+estimation_cut = 50_000   ### Number of sources for which to estimate redshifts
 
 ### Randomize full dataset indices
 len_DATASET_popCosmos_full = len(DATASET_popCosmos_full)
@@ -167,9 +167,9 @@ PHOTOMETRY_WideFastDeep_noiseless             = DATASET_popCosmos_full[BANDS_Wid
 nYrObs     = 1 # one-year depths
 nVisYr     = 1 # one visit/yr (i.e., no co-adds)
 gamma      = 0.04
-sigLim     = 0 # 
+sigLim     = 1 # 
 inputType  = 'pogson' # input pogson magnitudes (AB)
-outputType = 'asinh'  # output asinh magnitudes
+outputType = 'pogson' # ouptut pogson magnitudes (AB)
 
 seed = 42
 
@@ -282,6 +282,10 @@ REDSHIFTS_WideFastDeep             = REDSHIFTS_popCosmos_full[IDX_popCosmos_Wide
 np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField",             REDSHIFTS_DeepField,             allow_pickle = True)            
 np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField_lpReference", REDSHIFTS_DeepField_lpReference, allow_pickle = True)
 np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep",          REDSHIFTS_WideFastDeep,          allow_pickle = True)         
+
+PHOTOMETRY_DeepField_noisy             = PHOTOMETRY_DeepField_noisy.replace(np.inf, np.nan)
+PHOTOMETRY_DeepField_noisy_lpReference = PHOTOMETRY_DeepField_noisy_lpReference.replace(np.inf, np.nan)
+PHOTOMETRY_WideFastDeep_noisy          = PHOTOMETRY_WideFastDeep_noisy.replace(np.inf, np.nan)
 
 print(timestamp(), "Finished creating datasets. Time elapsed: ", timer(start_time))
 
@@ -396,190 +400,128 @@ df_PHOTOZS_DeepField_lephare.to_parquet(f"{outputs_directory}/PHOTOZS_DeepField_
 print(timestamp(), "Finished estimating photo-zs with LePhare. Time elapsed: ", timer(start_time))
 
 # ----------------------------------------------------------------------------------------------- #
-# Section 3: Estimate redshfits with UMAPs                                                        #
+# Section 3: Estimate redshfits with FlexZBoost                                                   #
 # ----------------------------------------------------------------------------------------------- #
 
-print(timestamp(), "Preparing input data for UMAPs", end = "\r")
+print(timestamp(), "Preparing input data for FlexZBoost", end = "\r")
 
 ### Prepare input data
-TRAINING_DATA_UMAP = PHOTOMETRY_DeepField_noisy
+TRAINING_DATA_flexZBoost_specZs = PHOTOMETRY_DeepField_noisy[BANDS_WideFastDeep + ERR_BANDS_WideFastDeep]
+TRAINING_DATA_flexZBoost_specZs["redshift"] = REDSHIFTS_DeepField
 
-TRAINING_PHOTOMETRY_UMAP = TRAINING_DATA_UMAP[BANDS_WideFastDeep]
-TRAINING_PHOTOMERRS_UMAP = TRAINING_DATA_UMAP[ERR_BANDS_WideFastDeep]
+TRAINING_DATA_flexZBoost_photoZs = PHOTOMETRY_DeepField_noisy[BANDS_WideFastDeep + ERR_BANDS_WideFastDeep]
+TRAINING_DATA_flexZBoost_photoZs["redshift"] = PHOTOZS_DeepField_lephare
 
-TRAINING_REDSHIFTS_UMAP_specZs  = REDSHIFTS_DeepField
-TRAINING_REDSHIFTS_UMAP_photoZs = PHOTOZS_DeepField_lephare
+ESTIMATION_DATA_flexZBoost = PHOTOMETRY_WideFastDeep_noisy[BANDS_WideFastDeep + ERR_BANDS_WideFastDeep]
 
-ESTIMATION_DATA_UMAP = PHOTOMETRY_WideFastDeep_noisy
+print(timestamp(), "Prepared input data for FlexZBoost. Time elapsed: ", timer(start_time))
 
-ESTIMATION_PHOTOMETRY_UMAP = ESTIMATION_DATA_UMAP[BANDS_WideFastDeep]
-ESTIMATION_PHOTOMERRS_UMAP = ESTIMATION_DATA_UMAP[ERR_BANDS_WideFastDeep]
+### Set FlexZBoost parameters
+reference_band = 'LSST_i'
 
-COLORNAMES_WideFastDeep = [f"{BANDS_WideFastDeep[i].split('_')[-1]}-{BANDS_WideFastDeep[i + 1].split('_')[-1]}"
-                           for i in range(len(BANDS_WideFastDeep) - 1)]
-
-COLERRNAMES_WideFastDeep = [f"{BANDS_WideFastDeep[i].split('_')[-1]}-{BANDS_WideFastDeep[i + 1].split('_')[-1]}_err"
-                           for i in range(len(BANDS_WideFastDeep) - 1)]
-
-TRAINING_COLORS_UMAP = pd.DataFrame(
-    {COLORNAMES_WideFastDeep[i]:
-        TRAINING_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i]] - TRAINING_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i + 1]]
-            for i in range(len(BANDS_WideFastDeep) - 1)}
+flexZBoost_parameters = dict(
+    zmin              = 0.0,
+    zmax              = 6.0,
+    nzbins            = 601,
+    trainfrac         = 0.75,
+    bumpmin           = 0.02,
+    bumpmax           = 0.35,
+    nbump             = 20,
+    sharpmin          = 0.7,
+    sharpmax          = 2.1,
+    nsharp            = 15,
+    max_basis         = 35,
+    basis_system      = "cosine",
+    regression_params = {"max_depth": 8, "objective": "reg:squarederror"},
 )
 
-TRAINING_COLERRS_UMAP = pd.DataFrame(
-    {COLERRNAMES_WideFastDeep[i]:
-        np.clip(np.sqrt(TRAINING_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i]]**2 + TRAINING_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i + 1]]**2),
-                None, 0.05)
-            for i in range(len(ERR_BANDS_WideFastDeep) - 1)}
+print(timestamp(), "Building, and getting redshifts from, spec-z FlexZBoost", end = "\r")
+
+### Buld a FlexZBoost estimator from the training photometry, colored with spectrosopic redshifts
+outputModelPath_FlexZBoost_specZs = f"{outputs_directory}/model_flexZBoost_specZs_{date}.pkl"
+
+informFlexZBoost_specZs = FlexZBoostInformer.make_stage(
+    model = outputModelPath_FlexZBoost_specZs,
+
+    hdf5_groupname = "",
+    redshift_col   = "redshift",
+    bands          = BANDS_WideFastDeep,
+    err_bands      = ERR_BANDS_WideFastDeep,
+    ref_band       = "LSST_i",
+
+    mag_limits = {band: M5_DEPTHS_DeepField[band] for band in BANDS_WideFastDeep},
+
+    **flexZBoost_parameters
 )
 
-ESTIMATION_COLORS_UMAP = pd.DataFrame(
-    {COLORNAMES_WideFastDeep[i]:
-        ESTIMATION_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i]] - ESTIMATION_PHOTOMETRY_UMAP[BANDS_WideFastDeep[i + 1]]
-            for i in range(len(BANDS_WideFastDeep) - 1)}
+informFlexZBoost_specZs.inform(TRAINING_DATA_flexZBoost_specZs)
+informFlexZBoost_specZs.finalize()
+
+outputPath_FlexZBoost_specZs = f"{outputs_directory}/output_flexZBoost_specZs_{date}.hdf5"
+estimateFlexZBoost_specZs = FlexZBoostEstimator.make_stage(
+    
+    model = informFlexZBoost_specZs.get_handle('model'),
+    output = outputPath_FlexZBoost_specZs,
+    qp_representation='flexzboost',
+
+    hdf5_groupname = "",
+    redshift_col   = "redshift",
+    bands          = BANDS_WideFastDeep,
+    err_bands      = ERR_BANDS_WideFastDeep,
+    ref_band       = "LSST_i",
+
+    mag_limits = {band: M5_DEPTHS_WideFastDeep[band] for band in BANDS_WideFastDeep},)
+
+flexZBoostEstimated_specZs = estimateFlexZBoost_specZs.estimate(ESTIMATION_DATA_flexZBoost)
+rawPhotoZs_flexZBoost_specZs = flexZBoostEstimated_specZs.data.median()
+PHOTOZS_flexZBoost_specZs = np.reshape(rawPhotoZs_flexZBoost_specZs, len(rawPhotoZs_flexZBoost_specZs))
+np.save(f"{outputs_directory}/PHOTOZS_flexZBoost_specZs", PHOTOZS_flexZBoost_specZs)
+    
+
+print(timestamp(), "Built, and got photo-zs from, spec-z FlexZBoost. Time elapsed: ", timer(start_time))
+
+print(timestamp(), "Building, and getting redshifts from, photoz-z FlexZBoost", end = "\r")
+
+### Buld a FlexZBoost estimator from the training photometry, colored with the photometric redshifts from LePhare
+outputModelPath_FlexZBoost_photoZs = f"{outputs_directory}/model_flexZBoost_photoZs_{date}.pkl"
+
+informFlexZBoost_photoZs = FlexZBoostInformer.make_stage(
+    model = outputModelPath_FlexZBoost_photoZs,
+
+    hdf5_groupname = "",
+    redshift_col   = "redshift",
+    bands          = BANDS_WideFastDeep,
+    err_bands      = ERR_BANDS_WideFastDeep,
+    ref_band       = "LSST_i",
+
+    mag_limits = {band: M5_DEPTHS_DeepField[band] for band in BANDS_WideFastDeep},
+
+    **flexZBoost_parameters
 )
 
-ESTIMATION_COLERRS_UMAP = pd.DataFrame(
-    {COLERRNAMES_WideFastDeep[i]:
-        np.clip(np.sqrt(ESTIMATION_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i]]**2 + ESTIMATION_PHOTOMERRS_UMAP[ERR_BANDS_WideFastDeep[i + 1]]**2),
-                None, 0.05)
-            for i in range(len(ERR_BANDS_WideFastDeep) - 1)}
-)
+informFlexZBoost_photoZs.inform(TRAINING_DATA_flexZBoost_photoZs)
 
-TRAINING_COLORS_UMAP.to_parquet(f"{outputs_directory}/TRAINING_COLORS_UMAP{date}.pq")
-TRAINING_COLERRS_UMAP.to_parquet(f"{outputs_directory}/TRAINING_COLERRS_UMAP{date}.pq")
-ESTIMATION_COLORS_UMAP.to_parquet(f"{outputs_directory}/ESTIMATION_COLORS_UMAP{date}.pq")
-ESTIMATION_COLERRS_UMAP.to_parquet(f"{outputs_directory}/ESTIMATION_COLERRS_UMAP{date}.pq")
+outputPath_FlexZBoost_photoZs = f"{outputs_directory}/output_flexZBoost_photoZs_{date}.hdf5"
 
-print(timestamp(), "Prepared input data for UMAPs. Time elapsed: ", timer(start_time))
-
-print(timestamp(), "Building, and getting redshifts from, spec-z UMAP", end = "\r")
-
-### Set UMAP parameters
-ambient_metric_umap = "manhattan_weighted_linear"
-n_neighbors_umap    = 80
-min_dist            = 0.0
-
-n_neighbors_knn = 10
-metric_p_knn   = 2
-
-precision_gauss_kde = 0.01
-
-### Buld a UMAP from the training photometry, colored with spectrosopic redshifts
-informedReducerPath_UMAP_wSpecZs      = f"{outputs_directory}/informedReducer_UMAP_wSpecZs_{date}.pkl"
-informedEmbeddingPath_UMAP_wSpecZs    = f"{outputs_directory}/informedEmbedding_UMAP_wSpecZs_{date}.pq"
-informedkNNRegressorPath_UMAP_wSpecZs = f"{outputs_directory}/informedkNNRegressor_UMAP_wSpecZs_{date}.pkl"
-
-estimatedEmbeddingPath_UMAP_wSpecZs     = f"{outputs_directory}/estimatedEmbedding_UMAP_wSpecZs_{date}.pq"
-estimatedPhotoZMediansPath_UMAP_wSpecZs = f"{outputs_directory}/estimatedPhotoZMedians_UMAP_wSpecZs_{date}.pq"
-estimatedPhotoZPDFsPath_UMAP_wSpecZs    = f"{outputs_directory}/estimatedPhotoZPDFs_UMAP_wSpecZs_{date}.hdf5"
-
-estimatePhotozsUMAP_wSpecZs = UMAPEstimator.make_stage(
-    name = "estimatePhotozsUMAP_wSpecZs",
-
-    ### Specify paths
-    informed_reducer       = informedReducerPath_UMAP_wSpecZs,
-    informed_embedding     = informedEmbeddingPath_UMAP_wSpecZs,
-    informed_kNN_regressor = informedkNNRegressorPath_UMAP_wSpecZs,
-
-    estimated_embedding      = estimatedEmbeddingPath_UMAP_wSpecZs,
-    estimated_photoz_medians = estimatedPhotoZMediansPath_UMAP_wSpecZs,
-    estimated_photoz_pdfs    = estimatedPhotoZPDFsPath_UMAP_wSpecZs,
-
-    ### Specify UMAP parameters
-    ambient_metric_umap = ambient_metric_umap,
+estimateFlexZBoost_photoZs = FlexZBoostEstimator.make_stage(
     
-    n_neighbors_umap = n_neighbors_umap,
-    min_dist         = min_dist,
+    model = informFlexZBoost_photoZs.get_handle('model'),
+    output = outputPath_FlexZBoost_photoZs,
+    qp_representation='flexzboost',
+
+    hdf5_groupname = "",
+    redshift_col   = "redshift",
+    bands          = BANDS_WideFastDeep,
+    err_bands      = ERR_BANDS_WideFastDeep,
+    ref_band       = "LSST_i",
+
+    mag_limits = {band: M5_DEPTHS_WideFastDeep[band] for band in BANDS_WideFastDeep})
+
+flexZBoostEstimated_photoZs = estimateFlexZBoost_photoZs.estimate(ESTIMATION_DATA_flexZBoost)
+rawPhotoZs_flexZBoost_photoZs = flexZBoostEstimated_photoZs.data.median()
+PHOTOZS_flexZBoost_photoZs = np.reshape(rawPhotoZs_flexZBoost_photoZs, len(rawPhotoZs_flexZBoost_photoZs))
+np.save(f"{outputs_directory}/PHOTOZS_flexZBoost_photoZs", PHOTOZS_flexZBoost_photoZs)
     
-    n_neighbors_knn = n_neighbors_knn,
-    metric_p_knn    = metric_p_knn,
-    
-    precision_gauss_kde = precision_gauss_kde,
-    
-    seed = seed
-)
-
-estimatePhotozsUMAP_wSpecZs.set_data("training_photometry", data = TRAINING_COLORS_UMAP)
-estimatePhotozsUMAP_wSpecZs.set_data("training_phot_error", data = TRAINING_COLERRS_UMAP)
-estimatePhotozsUMAP_wSpecZs.set_data("training_redshift",   data = TRAINING_REDSHIFTS_UMAP_specZs)
-
-estimatePhotozsUMAP_wSpecZs.UMAP_informer()
-
-estimatePhotozsUMAP_wSpecZs.set_data("estimation_photometry", data = ESTIMATION_COLORS_UMAP)
-estimatePhotozsUMAP_wSpecZs.set_data("estimation_phot_error", data = ESTIMATION_COLERRS_UMAP)
-estimatePhotozsUMAP_wSpecZs.UMAP_estimator()
-
-estimatePhotozsUMAP_wSpecZs.get_handle("informed_reducer").write()
-estimatePhotozsUMAP_wSpecZs.get_handle("informed_embedding").write()
-estimatePhotozsUMAP_wSpecZs.get_handle("informed_kNN_regressor").write()
-estimatePhotozsUMAP_wSpecZs.get_handle("estimated_embedding").write()
-estimatePhotozsUMAP_wSpecZs.get_handle("estimated_photoz_medians").write()
-estimatePhotozsUMAP_wSpecZs.get_handle("estimated_photoz_pdfs").write()
-
-PHOTOZS_estimated_wSpecZs = estimatePhotozsUMAP_wSpecZs.get_handle("estimated_photoz_medians").data
-estimatePhotozsUMAP_wSpecZs.finalize()
-
-print(timestamp(), "Built, and got photo-zs from, spec-z UMAP. Time elapsed: ", timer(start_time))
-
-print(timestamp(), "Building, and getting redshifts from, photoz-z UMAP", end = "\r")
-
-### Buld a UMAP from the training photometry, colored with the photometric redshifts from LePhare
-informedReducerPath_UMAP_wPhotoZs      = f"{outputs_directory}/informedReducer_UMAP_wPhotoZs_{date}.pkl"
-informedEmbeddingPath_UMAP_wPhotoZs    = f"{outputs_directory}/informedEmbedding_UMAP_wPhotoZs_{date}.pq"
-informedkNNRegressorPath_UMAP_wPhotoZs = f"{outputs_directory}/informedkNNRegressor_UMAP_wPhotoZs_{date}.pkl"
-
-estimatedEmbeddingPath_UMAP_wPhotoZs     = f"{outputs_directory}/estimatedEmbedding_UMAP_wPhotoZs_{date}.pq"
-estimatedPhotoZMediansPath_UMAP_wPhotoZs = f"{outputs_directory}/estimatedPhotoZMedians_UMAP_wPhotoZs_{date}.pq"
-estimatedPhotoZPDFsPath_UMAP_wPhotoZs    = f"{outputs_directory}/estimatedPhotoZPDFs_UMAP_wPhotoZs_{date}.hdf5"
-
-estimatePhotozsUMAP_wPhotoZs = UMAPEstimator.make_stage(
-    name = "estimatePhotozsUMAP_wPhotoZs",
-
-    ### Specify paths
-    informed_reducer       = informedReducerPath_UMAP_wPhotoZs,
-    informed_embedding     = informedEmbeddingPath_UMAP_wPhotoZs,
-    informed_kNN_regressor = informedkNNRegressorPath_UMAP_wPhotoZs,
-
-    estimated_embedding      = estimatedEmbeddingPath_UMAP_wPhotoZs,
-    estimated_photoz_medians = estimatedPhotoZMediansPath_UMAP_wPhotoZs,
-    estimated_photoz_pdfs    = estimatedPhotoZPDFsPath_UMAP_wPhotoZs,
-
-    ### Specify UMAP parameters
-    ambient_metric_umap = ambient_metric_umap,
-    
-    n_neighbors_umap = n_neighbors_umap,
-    min_dist         = min_dist,
-    
-    n_neighbors_knn = n_neighbors_knn,
-    metric_p_knn    = metric_p_knn,
-    
-    precision_gauss_kde = precision_gauss_kde,
-    
-    seed = seed
-)
-
-estimatePhotozsUMAP_wPhotoZs.set_data("training_photometry", data = TRAINING_PHOTOMETRY_UMAP)
-estimatePhotozsUMAP_wPhotoZs.set_data("training_phot_error", data = TRAINING_PHOTOMERRS_UMAP)
-estimatePhotozsUMAP_wPhotoZs.set_data("training_redshift",   data = TRAINING_REDSHIFTS_UMAP_photoZs)
-
-estimatePhotozsUMAP_wPhotoZs.UMAP_informer()
-
-estimatePhotozsUMAP_wPhotoZs.set_data("estimation_photometry", data = ESTIMATION_PHOTOMETRY_UMAP)
-estimatePhotozsUMAP_wPhotoZs.set_data("estimation_phot_error", data = ESTIMATION_PHOTOMERRS_UMAP)
-estimatePhotozsUMAP_wPhotoZs.UMAP_estimator()
-
-estimatePhotozsUMAP_wPhotoZs.get_handle("informed_reducer").write()
-estimatePhotozsUMAP_wPhotoZs.get_handle("informed_embedding").write()
-estimatePhotozsUMAP_wPhotoZs.get_handle("informed_kNN_regressor").write()
-estimatePhotozsUMAP_wPhotoZs.get_handle("estimated_embedding").write()
-estimatePhotozsUMAP_wPhotoZs.get_handle("estimated_photoz_medians").write()
-estimatePhotozsUMAP_wPhotoZs.get_handle("estimated_photoz_pdfs").write()
-
-PHOTOZS_estimated_wPhotoZs = estimatePhotozsUMAP_wPhotoZs.get_handle("estimated_photoz_medians").data
-estimatePhotozsUMAP_wPhotoZs.finalize()
-
-print(timestamp(), "Built, and got photo-zs from, photo-z UMAP. Time elapsed: ", timer(start_time))
+print(timestamp(), "Built, and got photo-zs from, photo-z FlexZBoost. Time elapsed: ", timer(start_time))
 
 print("Pipeline finished.")
