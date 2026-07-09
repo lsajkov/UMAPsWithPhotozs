@@ -254,113 +254,111 @@ print(f"Deep field:                    {len(PHOTOMETRY_DeepField_noisy)}")
 print(f"WideFastDeep field:            {len(PHOTOMETRY_WideFastDeep_noisy)}")
 print("--------------------------------------------")
 
-# # ----------------------------------------------------------------------------------------------- #
-# # Section 2: Estimate photo-zs for deep-field sample with LePhare                                 #
-# # ----------------------------------------------------------------------------------------------- #
+# ----------------------------------------------------------------------------------------------- #
+# Section 2: Estimate photo-zs for deep-field sample with LePhare                                 #
+# ----------------------------------------------------------------------------------------------- #
 
-# print(timestamp(), "Setting up LePhare", end = "\r")
+print(timestamp(), "Setting up LePhare", end = "\r")
 
-# ### Set up LePhare
-# path_to_lp_config_file    = "/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para"
-# os.environ["LEPHAREDIR"]  = f"{os.path.dirname(path_to_lp_config_file)}/data"
-# os.environ["LEPHAREWORK"] = f"{os.path.dirname(path_to_lp_config_file)}/work"
+### Set up LePhare
+path_to_lp_config_file    = "/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para"
+os.environ["LEPHAREDIR"]  = f"{os.path.dirname(path_to_lp_config_file)}/data"
+os.environ["LEPHAREWORK"] = f"{os.path.dirname(path_to_lp_config_file)}/work"
 
-# from rail.estimation.algos.lephare import LephareInformer, LephareEstimator
-# import lephare as lp
-# lephare_config = lp.read_config("/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para")
-# lp.data_retrieval.get_auxiliary_data(keymap = lephare_config)
+from rail.estimation.algos.lephare import LephareInformer, LephareEstimator
+import lephare as lp
+lephare_config = lp.read_config("/pscratch/sd/s/sajkov/analysis_pipeline/lephare/lsst.para")
+lp.data_retrieval.get_auxiliary_data(keymap = lephare_config)
 
-# path_to_filters = "/pscratch/sd/s/sajkov/analysis_pipeline/filters"
-# os.makedirs(f"{os.environ['LEPHAREDIR']}/filt/pipeline", exist_ok = True)
-# for f in glob.glob(f"{path_to_filters}/*.dat"):
-#     if f.endswith("F146.dat"):
-#         continue
-#     shutil.copy(f, f"{os.environ['LEPHAREDIR']}/filt/pipeline/")
+path_to_filters = "/pscratch/sd/s/sajkov/analysis_pipeline/filters"
+os.makedirs(f"{os.environ['LEPHAREDIR']}/filt/pipeline", exist_ok = True)
+for f in glob.glob(f"{path_to_filters}/*.dat"):
+    if f.endswith("F146.dat"):
+        continue
+    shutil.copy(f, f"{os.environ['LEPHAREDIR']}/filt/pipeline/")
 
-# FILTER_LIST = ",".join([f"pipeline/{band}.dat" for band in BANDS_DeepField])
-# print("Filters being used for LePhare:", FILTER_LIST)
-# lephare_config["FILTER_LIST"].value = FILTER_LIST
-# lephare_config["FILTER_FILE"].value = "filter_pipeline"
+FILTER_LIST = ",".join([f"pipeline/{band}.dat" for band in BANDS_DeepField])
+print("Filters being used for LePhare:", FILTER_LIST)
+lephare_config["FILTER_LIST"].value = FILTER_LIST
+lephare_config["FILTER_FILE"].value = "filter_pipeline"
 
-# os.makedirs(f"{os.environ['LEPHAREDIR']}/output", exist_ok = True)
-# lephare_config["PARA_OUT"].value = f"{os.environ['LEPHAREDIR']}/output/output_{date}.para"
+os.makedirs(f"{os.environ['LEPHAREDIR']}/output", exist_ok = True)
+lephare_config["PARA_OUT"].value = f"{os.environ['LEPHAREDIR']}/output/output_{date}.para"
 
-# lp.data_retrieval.get_auxiliary_data(keymap=lephare_config)
+lp.data_retrieval.get_auxiliary_data(keymap=lephare_config)
 
-# print(timestamp(), "Set up LePhare. Time elapsed: ", timer(start_time))
+print(timestamp(), "Set up LePhare. Time elapsed: ", timer(start_time))
 
 
-# print(timestamp(), "Informing LePhare", end = "\r")
+print(timestamp(), "Informing LePhare", end = "\r")
 
-# ### Inform LePhare
-# outputModelPath_lePhare = f"{outputs_directory}/model_lephare_{date}.pkl"
+### Inform LePhare
+outputModelPath_lePhare = f"{outputs_directory}/model_lephare_{date}.pkl"
 
-# inform_lephare = LephareInformer.make_stage(
+inform_lephare = LephareInformer.make_stage(
     
-#     name           = "inform_lephare",
+    name           = "inform_lephare",
 
-#     nondetect_val  = np.nan,
-#     model          = outputModelPath_lePhare,
-#     hdf5_groupname = "",
+    nondetect_val  = np.nan,
+    model          = outputModelPath_lePhare,
+    hdf5_groupname = "",
     
-#     bands        = BANDS_DeepField,
-#     err_bands    = ERR_BANDS_DeepField,
-#     ref_band     = "LSST_i",
-#     redshift_col = "redshift",
+    bands        = BANDS_DeepField,
+    err_bands    = ERR_BANDS_DeepField,
+    ref_band     = "LSST_i",
+    redshift_col = "redshift",
     
-#     zmin   = 0,
-#     zmax   = 6,
-#     nzbins = 601,
+    zmin   = 0,
+    zmax   = 6,
+    nzbins = 601,
     
-#     **{
-#         "lephare.FILTER_LIST": FILTER_LIST,
-#         "lephare.FILTER_FILE": "filter_pipeline",
-#     },
-# )
+    **{
+        "lephare.FILTER_LIST": FILTER_LIST,
+        "lephare.FILTER_FILE": "filter_pipeline",
+    },
+)
 
-# TRAININGDATA_LePhare = PHOTOMETRY_DeepField_noisy.copy()
-# TRAININGDATA_LePhare["redshift"] = REDSHIFTS_DeepField
-# TRAININGDATA_LePhare = TRAININGDATA_LePhare[:2] ### the training data are just here to satisfy the LePhare informer's requirement for having some input.
-#                                                 ### training data are only relevant when AUTO_ADAPT is enabled and properly working, which in this implemntation is not
+TRAININGDATA_LePhare = PHOTOMETRY_DeepField_noisy.copy()
+TRAININGDATA_LePhare["redshift"] = REDSHIFTS_DeepField
+TRAININGDATA_LePhare = TRAININGDATA_LePhare[:2] ### the training data are just here to satisfy the LePhare informer's requirement for having some input.
+                                                ### training data are only relevant when AUTO_ADAPT is enabled and properly working, which in this implemntation is not
 
-# inform_lephare.inform(TRAININGDATA_LePhare)
-# inform_lephare.get_handle("model").write()
-# inform_lephare.finalize()
+inform_lephare.inform(TRAININGDATA_LePhare)
+inform_lephare.get_handle("model").write()
+inform_lephare.finalize()
 
-# print(timestamp(), "Informed LePhare. Time elapsed: ", timer(start_time))
+print(timestamp(), "Informed LePhare. Time elapsed: ", timer(start_time))
 
-# print(timestamp(), "Estimating photo-zs with LePhare", end = "\r")
+print(timestamp(), "Estimating photo-zs with LePhare", end = "\r")
 
-# ### Estimate with LePhare
-# outputEstimationPath_lePhare = f"{outputs_directory}/estimation_lephare_{date}"
-# estimate_lephare = LephareEstimator.make_stage(
+### Estimate with LePhare
+outputEstimationPath_lePhare = f"{outputs_directory}/estimation_lephare_{date}"
+estimate_lephare = LephareEstimator.make_stage(
     
-#     name           = "estimate_lephare",
-#     model          = inform_lephare.get_handle("model"),
-#     hdf5_groupname = "",
+    name           = "estimate_lephare",
+    model          = inform_lephare.get_handle("model"),
+    hdf5_groupname = "",
 
-#     bands        = BANDS_DeepField,
-#     err_bands    = ERR_BANDS_DeepField,
-#     ref_band     = "LSST_i",
+    bands        = BANDS_DeepField,
+    err_bands    = ERR_BANDS_DeepField,
+    ref_band     = "LSST_i",
     
-#     nondetect_val = np.nan,
-#     aliases = dict(input="test_data", output="lephare_estim"),
-# )
+    nondetect_val = np.nan,
+    aliases = dict(input="test_data", output="lephare_estim"),
+)
 
-# ESTIMATION_DATA_LePhare = PHOTOMETRY_DeepField_noisy
-# lephare_estimated = estimate_lephare.estimate(ESTIMATION_DATA_LePhare)
+ESTIMATION_DATA_LePhare = PHOTOMETRY_DeepField_noisy
+lephare_estimated = estimate_lephare.estimate(ESTIMATION_DATA_LePhare)
 
-# PHOTOZS_rawLePhareOutput = lephare_estimated.read().median()
-# SIGMAS_photoZs_rawLePhareOutput = lephare_estimated.read().std()
-# PHOTOZS_DeepField_lephare = np.reshape(PHOTOZS_rawLePhareOutput, len(PHOTOZS_rawLePhareOutput))
-# SIGMAS_photozs_DeepField_lephare = np.reshape(SIGMAS_photoZs_rawLePhareOutput, len(SIGMAS_photoZs_rawLePhareOutput))
+PHOTOZS_rawLePhareOutput = lephare_estimated.read().median()
+SIGMAS_photoZs_rawLePhareOutput = lephare_estimated.read().std()
+PHOTOZS_DeepField_lephare = np.reshape(PHOTOZS_rawLePhareOutput, len(PHOTOZS_rawLePhareOutput))
+SIGMAS_photozs_DeepField_lephare = np.reshape(SIGMAS_photoZs_rawLePhareOutput, len(SIGMAS_photoZs_rawLePhareOutput))
 
-# df_PHOTOZS_DeepField_lephare = pd.DataFrame({"photo-z": PHOTOZS_DeepField_lephare, "sigma-photo-z": SIGMAS_photozs_DeepField_lephare})
-# df_PHOTOZS_DeepField_lephare.to_parquet(f"{outputs_directory}/PHOTOZS_DeepField_lePhare_{date}.pq")
+df_PHOTOZS_DeepField_lephare = pd.DataFrame({"photo-z": PHOTOZS_DeepField_lephare, "sigma-photo-z": SIGMAS_photozs_DeepField_lephare})
+df_PHOTOZS_DeepField_lephare.to_parquet(f"{outputs_directory}/PHOTOZS_DeepField_lePhare_{date}.pq")
 
-# print(timestamp(), "Finished estimating photo-zs with LePhare. Time elapsed: ", timer(start_time))
-
-PHOTOZS_DeepField_lephare = tables_io.read(f"{outputs_directory}/PHOTOZS_DeepField_lePhare_LSST_08Jul26.pq")["photo-z"].values
+print(timestamp(), "Finished estimating photo-zs with LePhare. Time elapsed: ", timer(start_time))
 
 # ----------------------------------------------------------------------------------------------- #
 # Section 3: Estimate redshfits with UMAPs                                                        #
