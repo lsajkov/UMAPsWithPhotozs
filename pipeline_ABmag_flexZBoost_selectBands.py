@@ -12,7 +12,7 @@ print("Starting pipeline.")
 
 ### Set the date, start the timer
 import time
-date = "smallestLePhareSet_08Jul26"
+date = "LSST_08Jul26"
 # date = time.strftime('%d%b%y', time.localtime())
 
 def timestamp():
@@ -112,30 +112,30 @@ M5_DEPTHS_DeepField = {'LSST_u'    : 27.74,
                       'LSST_r'    : 28.88,
                       'LSST_i'    : 28.96,
                       'LSST_z'    : 28.26,
-                      'LSST_y'    : 26.63,
-                      'Roman_F062': 27.7,
-                      'Roman_F087': 27.7,
-                      'Roman_F106': 27.6,
-                      'Roman_F129': 27.5,
-                      'Roman_F158': 27.0,
-                      'Roman_F184': 25.9,
-                      'Roman_F213': 28.3,
-                      'HSC_MB_00' : 26.41,
-                      'HSC_MB_01' : 26.51,
-                      'HSC_MB_02' : 26.45,
-                      'HSC_MB_03' : 26.69,
-                      'HSC_MB_04' : 26.93,
-                      'HSC_MB_05' : 26.62,
-                      'HSC_MB_06' : 26.26,
-                      'HSC_MB_07' : 26.02,
-                      'HSC_MB_08' : 26.07,
-                      'HSC_MB_09' : 26.00,
-                      'HSC_MB_10' : 26.06,
-                      'HSC_MB_11' : 25.52,
-                      'HSC_MB_12' : 25.58,
-                      'HSC_MB_13' : 25.43,
-                      'HSC_MB_14' : 25.15,
-                      'HSC_MB_15' : 24.79}
+                      'LSST_y'    : 26.63,}
+                    #   'Roman_F062': 27.7,
+                    #   'Roman_F087': 27.7,
+                    #   'Roman_F106': 27.6,
+                    #   'Roman_F129': 27.5,
+                    #   'Roman_F158': 27.0,
+                    #   'Roman_F184': 25.9,
+                    #   'Roman_F213': 28.3,}
+                    #   'HSC_MB_00' : 26.41,
+                    #   'HSC_MB_01' : 26.51,
+                    #   'HSC_MB_02' : 26.45,
+                    #   'HSC_MB_03' : 26.69,
+                    #   'HSC_MB_04' : 26.93,
+                    #   'HSC_MB_05' : 26.62,
+                    #   'HSC_MB_06' : 26.26,
+                    #   'HSC_MB_07' : 26.02,
+                    #   'HSC_MB_08' : 26.07,
+                    #   'HSC_MB_09' : 26.00,
+                    #   'HSC_MB_10' : 26.06,
+                    #   'HSC_MB_11' : 25.52,
+                    #   'HSC_MB_12' : 25.58,
+                    #   'HSC_MB_13' : 25.43,
+                    #   'HSC_MB_14' : 25.15,
+                    #   'HSC_MB_15' : 24.79}
 
 iBandLimit_DeepField = 27
 
