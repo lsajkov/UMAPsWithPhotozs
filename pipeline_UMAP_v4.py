@@ -12,7 +12,6 @@ print("Starting pipeline.")
 
 ### Set the date, start the timer
 import time
-# date = "UMAP_LSST_08Jul26"
 date = time.strftime('%d%b%y', time.localtime())
 
 def timestamp():
@@ -85,7 +84,7 @@ with h5py.File(redshifts_filepath) as simulated_catalog:
 
 ### Number of pop-cosmos sources to use in analysis
 training_cut   = 10_000   ### Number of sources used to train the estimators
-estimation_cut = 50_000   ### Number of sources for which to estimate redshifts
+estimation_cut = 100_000   ### Number of sources for which to estimate redshifts
 
 ### Randomize full dataset indices
 len_DATASET_popCosmos_full = len(DATASET_popCosmos_full)
@@ -109,8 +108,6 @@ M5_DEPTHS_DeepField = {'LSST_u'    : 27.74,
                       'LSST_i'    : 28.96,
                       'LSST_z'    : 28.26,
                       'LSST_y'    : 26.63,
-                    #   'Roman_F062': 27.7,
-                    #   'Roman_F087': 27.7,
                       'Roman_F106': 27.6,
                       'Roman_F129': 27.5,
                       'Roman_F158': 27.0,
@@ -164,16 +161,83 @@ PHOTOMETRY_WideFastDeep_noiseless = DATASET_popCosmos_full[BANDS_WideFastDeep].i
 nYrObs     = 1 # one-year depths
 nVisYr     = 1 # one visit/yr (i.e., no co-adds)
 gamma      = 0.04
-sigLim     = 1 #
 
 seed = 42
 
+### GET PHOTOMETRY IN ASINH MAGNITUDES
+
 ### Create: deep, multi-band, medium-band photometry for use in LePhare
 
-print(timestamp(), "Getting noisy deep field photometry in AB magnitudes.")
+print(timestamp(), "Getting noisy deep field photometry in asinh magnitudes.")
 
-getNoisyDeepFieldPhotometry = MultiSurveyErrorModel.make_stage(
-    name = "getNoisyDeepFieldPhotometry",
+getNoisyDeepFieldPhotometry_asinh = MultiSurveyErrorModel.make_stage(
+    name = "getNoisyDeepFieldPhotometry_asinh",
+    
+    inputType  = "pogson",
+    outputType = "asinh",
+    
+    m5     = M5_DEPTHS_DeepField,
+    bands  = BANDS_DeepField,
+    nYrObs = nYrObs,
+    nVisYr = nVisYr,
+    gamma  = gamma,
+    sigLim = 0,
+    
+    seed = seed
+)
+
+getNoisyDeepFieldPhotometry_asinh.set_data("noiseless_catalog", PHOTOMETRY_DeepField_noiseless) 
+getNoisyDeepFieldPhotometry_asinh.run()
+PHOTOMETRY_DeepField_asinh_noisy_full = getNoisyDeepFieldPhotometry_asinh.get_handle("noisy_catalog").data
+getNoisyDeepFieldPhotometry_asinh.finalize()
+
+iBandCut_DeepField_asinh_noisy = PHOTOMETRY_DeepField_asinh_noisy_full["LSST_i"] < iBandLimit_DeepField
+PHOTOMETRY_DeepField_asinh_noisy_iBandCut = PHOTOMETRY_DeepField_asinh_noisy_full[iBandCut_DeepField_asinh_noisy]
+PHOTOMETRY_DeepField_asinh_noisy_iBandCut_trainingCut = PHOTOMETRY_DeepField_asinh_noisy_iBandCut.iloc[:training_cut]
+
+PHOTOMETRY_DeepField_asinh_noisy = PHOTOMETRY_DeepField_asinh_noisy_iBandCut_trainingCut
+PHOTOMETRY_DeepField_asinh_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_DeepField_asinh_noisy_{date}.pq")
+
+### Create: LSST-like photometry
+
+print(timestamp(), "Getting noisy WideFastDeep photometry in asinh magnitudes.")
+
+getNoisyWideFastDeepPhotometry_asinh = MultiSurveyErrorModel.make_stage(
+    name = "getNoisyWideFastDeepPhotometry_asinh",
+    
+    inputType  = "pogson",
+    outputType = "asinh",
+    
+    m5     = M5_DEPTHS_WideFastDeep,
+    bands  = BANDS_WideFastDeep,
+    nYrObs = nYrObs,
+    nVisYr = nVisYr,
+    gamma  = gamma,
+    sigLim = 0,
+    
+    seed = seed
+)
+
+getNoisyWideFastDeepPhotometry_asinh.set_data("noiseless_catalog", PHOTOMETRY_WideFastDeep_noiseless) 
+getNoisyWideFastDeepPhotometry_asinh.run()
+PHOTOMETRY_WideFastDeep_asinh_noisy_full = getNoisyWideFastDeepPhotometry_asinh.get_handle("noisy_catalog").data
+getNoisyWideFastDeepPhotometry_asinh.finalize()
+
+iBandCut_WideFastDeep_asinh_noisy = PHOTOMETRY_WideFastDeep_asinh_noisy_full["LSST_i"] < iBandLimit_WideFastDeep
+PHOTOMETRY_WideFastDeep_asinh_noisy_iBandCut = PHOTOMETRY_WideFastDeep_asinh_noisy_full[iBandCut_WideFastDeep_asinh_noisy]
+PHOTOMETRY_WideFastDeep_asinh_noisy_iBandCut_trainingCut = PHOTOMETRY_WideFastDeep_asinh_noisy_iBandCut.iloc[:estimation_cut]
+
+PHOTOMETRY_WideFastDeep_asinh_noisy = PHOTOMETRY_WideFastDeep_asinh_noisy_iBandCut_trainingCut
+PHOTOMETRY_WideFastDeep_asinh_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_WideFastDeep_asinh_noisy_{date}.pq")
+
+### GET PHOTOMETRY IN POGSON MAGNITUDES
+
+### Create: deep, multi-band, medium-band photometry for use in LePhare
+
+print(timestamp(), "Getting noisy deep field photometry in pogson magnitudes.")
+
+getNoisyDeepFieldPhotometry_pogson = MultiSurveyErrorModel.make_stage(
+    name = "getNoisyDeepFieldPhotometry_pogson",
     
     inputType  = "pogson",
     outputType = "pogson",
@@ -183,29 +247,28 @@ getNoisyDeepFieldPhotometry = MultiSurveyErrorModel.make_stage(
     nYrObs = nYrObs,
     nVisYr = nVisYr,
     gamma  = gamma,
-    sigLim = sigLim,
+    sigLim = 1,
     
     seed = seed
 )
 
-getNoisyDeepFieldPhotometry.set_data("noiseless_catalog", PHOTOMETRY_DeepField_noiseless) 
-getNoisyDeepFieldPhotometry.run()
-PHOTOMETRY_DeepField_noisy_full = getNoisyDeepFieldPhotometry.get_handle("noisy_catalog").data
-getNoisyDeepFieldPhotometry.finalize()
+getNoisyDeepFieldPhotometry_pogson.set_data("noiseless_catalog", PHOTOMETRY_DeepField_noiseless) 
+getNoisyDeepFieldPhotometry_pogson.run()
+PHOTOMETRY_DeepField_pogson_noisy_full = getNoisyDeepFieldPhotometry_pogson.get_handle("noisy_catalog").data
+getNoisyDeepFieldPhotometry_pogson.finalize()
 
-iBandCut_DeepField_noisy = PHOTOMETRY_DeepField_noisy_full["LSST_i"] < 27
-PHOTOMETRY_DeepField_noisy_iBandCut = PHOTOMETRY_DeepField_noisy_full[iBandCut_DeepField_noisy]
-PHOTOMETRY_DeepField_noisy_iBandCut_trainingCut = PHOTOMETRY_DeepField_noisy_iBandCut.iloc[:training_cut]
+PHOTOMETRY_DeepField_pogson_noisy_iBandCut = PHOTOMETRY_DeepField_pogson_noisy_full[iBandCut_DeepField_asinh_noisy]
+PHOTOMETRY_DeepField_pogson_noisy_iBandCut_trainingCut = PHOTOMETRY_DeepField_pogson_noisy_iBandCut.iloc[:training_cut]
 
-PHOTOMETRY_DeepField_noisy = PHOTOMETRY_DeepField_noisy_iBandCut_trainingCut
-PHOTOMETRY_DeepField_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_DeepField_noisy_{date}.pq")
+PHOTOMETRY_DeepField_pogson_noisy = PHOTOMETRY_DeepField_pogson_noisy_iBandCut_trainingCut
+PHOTOMETRY_DeepField_pogson_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_DeepField_pogson_noisy_{date}.pq")
 
 ### Create: LSST-like photometry
 
-print(timestamp(), "Getting noisy WideFastDeep photometry in AB magnitudes.")
+print(timestamp(), "Getting noisy WideFastDeep photometry in pogson magnitudes.")
 
-getNoisyWideFastDeepPhotometry = MultiSurveyErrorModel.make_stage(
-    name = "getNoisyWideFastDeepPhotometry",
+getNoisyWideFastDeepPhotometry_pogson = MultiSurveyErrorModel.make_stage(
+    name = "getNoisyWideFastDeepPhotometry_pogson",
     
     inputType  = "pogson",
     outputType = "pogson",
@@ -215,27 +278,25 @@ getNoisyWideFastDeepPhotometry = MultiSurveyErrorModel.make_stage(
     nYrObs = nYrObs,
     nVisYr = nVisYr,
     gamma  = gamma,
-    sigLim = sigLim,
+    sigLim = 1,
     
     seed = seed
 )
 
-getNoisyWideFastDeepPhotometry.set_data("noiseless_catalog", PHOTOMETRY_WideFastDeep_noiseless) 
-getNoisyWideFastDeepPhotometry.run()
-PHOTOMETRY_WideFastDeep_noisy_full = getNoisyWideFastDeepPhotometry.get_handle("noisy_catalog").data
-getNoisyWideFastDeepPhotometry.finalize()
+getNoisyWideFastDeepPhotometry_pogson.set_data("noiseless_catalog", PHOTOMETRY_WideFastDeep_noiseless) 
+getNoisyWideFastDeepPhotometry_pogson.run()
+PHOTOMETRY_WideFastDeep_pogson_noisy_full = getNoisyWideFastDeepPhotometry_pogson.get_handle("noisy_catalog").data
+getNoisyWideFastDeepPhotometry_pogson.finalize()
 
-iBandCut_WideFastDeep_noisy = PHOTOMETRY_WideFastDeep_noisy_full["LSST_i"] < 25
-PHOTOMETRY_WideFastDeep_noisy_iBandCut = PHOTOMETRY_WideFastDeep_noisy_full[iBandCut_WideFastDeep_noisy]
-PHOTOMETRY_WideFastDeep_noisy_iBandCut_trainingCut = PHOTOMETRY_WideFastDeep_noisy_iBandCut.iloc[:estimation_cut]
+PHOTOMETRY_WideFastDeep_pogson_noisy_iBandCut = PHOTOMETRY_WideFastDeep_pogson_noisy_full[iBandCut_WideFastDeep_asinh_noisy]
+PHOTOMETRY_WideFastDeep_pogson_noisy_iBandCut_trainingCut = PHOTOMETRY_WideFastDeep_pogson_noisy_iBandCut.iloc[:estimation_cut]
 
-PHOTOMETRY_WideFastDeep_noisy = PHOTOMETRY_WideFastDeep_noisy_iBandCut_trainingCut
-PHOTOMETRY_WideFastDeep_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_WideFastDeep_noisy_{date}.pq")
-
+PHOTOMETRY_WideFastDeep_pogson_noisy = PHOTOMETRY_WideFastDeep_pogson_noisy_iBandCut_trainingCut
+PHOTOMETRY_WideFastDeep_pogson_noisy.to_parquet(f"{outputs_directory}/PHOTOMETRY_WideFastDeep_pogson_noisy_{date}.pq")
 
 ### Get source indices
-IDX_popCosmos_DeepField             = list(PHOTOMETRY_DeepField_noisy.index)
-IDX_popCosmos_WideFastDeep          = list(PHOTOMETRY_WideFastDeep_noisy.index)
+IDX_popCosmos_DeepField             = list(PHOTOMETRY_DeepField_asinh_noisy.index)
+IDX_popCosmos_WideFastDeep          = list(PHOTOMETRY_WideFastDeep_asinh_noisy.index)
 
 ### Select relevant redshifts
 REDSHIFTS_DeepField                = REDSHIFTS_popCosmos_full[IDX_popCosmos_DeepField]
@@ -244,14 +305,16 @@ REDSHIFTS_WideFastDeep             = REDSHIFTS_popCosmos_full[IDX_popCosmos_Wide
 np.save(f"{outputs_directory}/TRUEREDSHIFTS_DeepField",             REDSHIFTS_DeepField,             allow_pickle = True)   
 np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep",          REDSHIFTS_WideFastDeep,          allow_pickle = True)         
 
-PHOTOMETRY_DeepField_noisy    = PHOTOMETRY_DeepField_noisy.replace(np.inf, np.nan)
-PHOTOMETRY_WideFastDeep_noisy = PHOTOMETRY_WideFastDeep_noisy.replace(np.inf, np.nan)
+PHOTOMETRY_DeepField_pogson_noisy    = PHOTOMETRY_DeepField_pogson_noisy.replace(np.inf, np.nan)
+PHOTOMETRY_WideFastDeep_pogson_noisy = PHOTOMETRY_WideFastDeep_pogson_noisy.replace(np.inf, np.nan)
 
 print(timestamp(), "Finished creating datasets. Time elapsed: ", timer(start_time))
 
 print("------------ Length of datasets ------------")
-print(f"Deep field:                    {len(PHOTOMETRY_DeepField_noisy)}")
-print(f"WideFastDeep field:            {len(PHOTOMETRY_WideFastDeep_noisy)}")
+print(f"Deep field (asinh):          {len(PHOTOMETRY_DeepField_asinh_noisy)}")
+print(f"Deep field (pogson):         {len(PHOTOMETRY_DeepField_pogson_noisy)}")
+print(f"WideFastDeep field (asinh):  {len(PHOTOMETRY_WideFastDeep_asinh_noisy)}")
+print(f"WideFastDeep field (pogson): {len(PHOTOMETRY_WideFastDeep_pogson_noisy)}")
 print("--------------------------------------------")
 
 # ----------------------------------------------------------------------------------------------- #
@@ -318,7 +381,7 @@ inform_lephare = LephareInformer.make_stage(
     },
 )
 
-TRAININGDATA_LePhare = PHOTOMETRY_DeepField_noisy.copy()
+TRAININGDATA_LePhare = PHOTOMETRY_DeepField_pogson_noisy.copy()
 TRAININGDATA_LePhare["redshift"] = REDSHIFTS_DeepField
 TRAININGDATA_LePhare = TRAININGDATA_LePhare[:2] ### the training data are just here to satisfy the LePhare informer's requirement for having some input.
                                                 ### training data are only relevant when AUTO_ADAPT is enabled and properly working, which in this implemntation is not
@@ -347,7 +410,7 @@ estimate_lephare = LephareEstimator.make_stage(
     aliases = dict(input="test_data", output="lephare_estim"),
 )
 
-ESTIMATION_DATA_LePhare = PHOTOMETRY_DeepField_noisy
+ESTIMATION_DATA_LePhare = PHOTOMETRY_DeepField_pogson_noisy
 lephare_estimated = estimate_lephare.estimate(ESTIMATION_DATA_LePhare)
 
 PHOTOZS_rawLePhareOutput = lephare_estimated.read().median()
@@ -367,7 +430,7 @@ print(timestamp(), "Finished estimating photo-zs with LePhare. Time elapsed: ", 
 print(timestamp(), "Preparing input data for UMAPs", end = "\r")
 
 ### Prepare input data
-TRAINING_DATA_UMAP = PHOTOMETRY_DeepField_noisy
+TRAINING_DATA_UMAP = PHOTOMETRY_DeepField_asinh_noisy
 
 TRAINING_PHOTOMETRY_UMAP = TRAINING_DATA_UMAP[BANDS_WideFastDeep]
 TRAINING_PHOTOMERRS_UMAP = TRAINING_DATA_UMAP[ERR_BANDS_WideFastDeep]
@@ -375,7 +438,7 @@ TRAINING_PHOTOMERRS_UMAP = TRAINING_DATA_UMAP[ERR_BANDS_WideFastDeep]
 TRAINING_REDSHIFTS_UMAP_specZs  = REDSHIFTS_DeepField
 TRAINING_REDSHIFTS_UMAP_photoZs = PHOTOZS_DeepField_lephare
 
-ESTIMATION_DATA_UMAP = PHOTOMETRY_WideFastDeep_noisy
+ESTIMATION_DATA_UMAP = PHOTOMETRY_WideFastDeep_asinh_noisy
 
 ESTIMATION_PHOTOMETRY_UMAP = ESTIMATION_DATA_UMAP[BANDS_WideFastDeep]
 ESTIMATION_PHOTOMERRS_UMAP = ESTIMATION_DATA_UMAP[ERR_BANDS_WideFastDeep]
@@ -412,19 +475,7 @@ ESTIMATION_COLERRS_UMAP = pd.DataFrame(
             for i in range(len(ERR_BANDS_WideFastDeep) - 1)}
 )
 
-### TEMPORARY FIX: dropping sources that have *any* nan values
-NONnanIDX_DeepField    = np.prod(~np.isnan(PHOTOMETRY_DeepField_noisy), axis = 1) == 1
-NONnanIDX_WideFastDeep = np.prod(~np.isnan(PHOTOMETRY_WideFastDeep_noisy), axis = 1) == 1
-
-TRAINING_COLORS_UMAP    = TRAINING_COLORS_UMAP[NONnanIDX_DeepField]
-TRAINING_COLERRS_UMAP   = TRAINING_COLERRS_UMAP[NONnanIDX_DeepField]
-TRAINING_REDSHIFTS_UMAP_specZs = TRAINING_REDSHIFTS_UMAP_specZs[NONnanIDX_DeepField]
-TRAINING_REDSHIFTS_UMAP_photoZs = TRAINING_REDSHIFTS_UMAP_photoZs[NONnanIDX_DeepField]
-
-ESTIMATION_COLORS_UMAP  = ESTIMATION_COLORS_UMAP[NONnanIDX_WideFastDeep]
-ESTIMATION_COLERRS_UMAP = ESTIMATION_COLERRS_UMAP[NONnanIDX_WideFastDeep]
-ESTIMATION_REDSHIFTS_UMAP = REDSHIFTS_WideFastDeep[NONnanIDX_WideFastDeep]
-###
+ESTIMATION_REDSHIFTS_UMAP = REDSHIFTS_WideFastDeep
 
 TRAINING_COLORS_UMAP.to_parquet(f"{outputs_directory}/TRAINING_COLORS_UMAP_{date}.pq")
 TRAINING_COLERRS_UMAP.to_parquet(f"{outputs_directory}/TRAINING_COLERRS_UMAP_{date}.pq")
@@ -565,4 +616,6 @@ estimatePhotozsUMAP_wPhotoZs.finalize()
 
 print(timestamp(), "Built, and got photo-zs from, photo-z UMAP. Time elapsed: ", timer(start_time))
 
+outputs_directory = "/pscratch/sd/s/sajkov/analysis_pipeline/runs/test_fullPipeline_10Jul26"
+shutil.copy(__file__, f"{outputs_directory}/")
 print("Pipeline finished.")
