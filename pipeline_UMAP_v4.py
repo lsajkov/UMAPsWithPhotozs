@@ -308,6 +308,10 @@ np.save(f"{outputs_directory}/TRUEREDSHIFTS_WideFastDeep",          REDSHIFTS_Wi
 PHOTOMETRY_DeepField_pogson_noisy    = PHOTOMETRY_DeepField_pogson_noisy.replace(np.inf, np.nan)
 PHOTOMETRY_WideFastDeep_pogson_noisy = PHOTOMETRY_WideFastDeep_pogson_noisy.replace(np.inf, np.nan)
 
+np.save(f"{outputs_directory}/IDX_sources_DeepField",    IDX_popCosmos_DeepField,    allow_pickle = True)   
+np.save(f"{outputs_directory}/IDX_sources_WideFastDeep", IDX_popCosmos_WideFastDeep, allow_pickle = True)         
+
+
 print(timestamp(), "Finished creating datasets. Time elapsed: ", timer(start_time))
 
 print("------------ Length of datasets ------------")

@@ -3,3 +3,6 @@
 .ipynb_checkpoints/
 .DS_Store
 *.pyc
+deepHSC/
+LSST/
+LSSTRoman/
