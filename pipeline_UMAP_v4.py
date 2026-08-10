@@ -620,6 +620,5 @@ estimatePhotozsUMAP_wPhotoZs.finalize()
 
 print(timestamp(), "Built, and got photo-zs from, photo-z UMAP. Time elapsed: ", timer(start_time))
 
-outputs_directory = "/pscratch/sd/s/sajkov/analysis_pipeline/runs/test_fullPipeline_10Jul26"
 shutil.copy(__file__, f"{outputs_directory}/")
 print("Pipeline finished.")
